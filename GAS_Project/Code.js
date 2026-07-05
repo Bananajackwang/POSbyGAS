@@ -130,3 +130,7 @@ function voidOrder(timestamp) {
   
   return false;
 }
+
+if (typeof module !== 'undefined') {
+  module.exports = { doGet, include, getInitialData, submitOrder, getSalesHistory, voidOrder };
+}

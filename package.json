@@ -1,0 +1,16 @@
+{
+  "name": "pos-system",
+  "version": "1.0.0",
+  "description": "POS system by GAS",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "jest": "^30.4.2",
+    "jest-environment-jsdom": "^30.4.1"
+  }
+}
