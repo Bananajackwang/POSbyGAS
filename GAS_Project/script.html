@@ -1,0 +1,489 @@
+<script>
+// 全域錯誤監聽 (方便除錯 GAS 上的錯誤)
+window.onerror = function(msg, url, lineNo, columnNo, error) {
+    alert('發生錯誤: ' + msg + '\n行號: ' + lineNo);
+    return false;
+};
+
+// 狀態管理
+const state = {
+    activeCategory: null,
+    cart: [], // { product, quantity }
+    discount: { type: null, value: 0 }
+};
+
+let MOCK_DATA = { categories: [], products: [] };
+
+// DOM 元素
+const els = {
+    productGrid: document.getElementById('product-grid'),
+    cartItems: document.getElementById('cart-items'),
+    totalAmount: document.getElementById('total-amount'),
+    checkoutBtn: document.getElementById('checkout-btn'),
+    clearCartBtn: document.getElementById('clear-cart-btn'),
+    
+    // Modal
+    modal: document.getElementById('checkout-modal'),
+    modalTotalAmount: document.getElementById('modal-total-amount'),
+    tenderedAmount: document.getElementById('tendered-amount'),
+    modalChangeAmount: document.getElementById('modal-change-amount'),
+    modalConfirmBtn: document.getElementById('modal-confirm-btn'),
+    quickBtns: document.querySelectorAll('.quick-btn'),
+    discountBtns: document.querySelectorAll('.discount-btn'),
+    clearDiscountBtn: document.getElementById('clear-discount-btn'),
+    
+    // History
+    historyBtn: document.getElementById('history-btn'),
+    historyModal: document.getElementById('history-modal'),
+    closeHistoryBtn: document.getElementById('close-history-btn'),
+    historyList: document.getElementById('history-list'),
+};
+
+// 初始化
+function init() {
+    els.productGrid.innerHTML = '<div class="empty-cart-message">正在載入商品資料...</div>';
+    
+    if (typeof google === 'undefined') {
+        console.log('Local environment detected. Using mock data.');
+        setTimeout(() => {
+            initData({
+                categories: ['主食', '飲料'],
+                products: [
+                    { id: '1', name: '招牌便當', price: 100, category: '主食' },
+                    { id: '2', name: '排骨便當', price: 110, category: '主食' },
+                    { id: '3', name: '紅茶', price: 30, category: '飲料' }
+                ]
+            });
+        }, 500);
+        return;
+    }
+    
+    // 透過 GAS API 取得試算表資料
+    google.script.run
+        .withSuccessHandler(initData)
+        .withFailureHandler(err => {
+            alert('載入資料失敗：' + err);
+        })
+        .getInitialData();
+}
+
+function initData(data) {
+    MOCK_DATA = data;
+    renderProducts();
+    setupEventListeners();
+}
+
+// 渲染商品網格 (顯示所有分類)
+function renderProducts() {
+    let html = '';
+    MOCK_DATA.categories.forEach(cat => {
+        const catProducts = MOCK_DATA.products.filter(p => p.category === cat);
+        if (catProducts.length > 0) {
+            html += `<div class="category-header"><h3>${cat}</h3></div>`;
+            catProducts.forEach(p => {
+                html += `
+                    <div class="product-card" data-id="${p.id}">
+                        <div class="product-name">${p.name}</div>
+                        <div class="product-price">$${p.price}</div>
+                    </div>
+                `;
+            });
+        }
+    });
+    els.productGrid.innerHTML = html;
+}
+
+// 渲染購物車
+function renderCart() {
+    if (state.cart.length === 0) {
+        els.cartItems.innerHTML = `<div class="empty-cart-message">尚未選擇任何商品</div>`;
+        els.totalAmount.textContent = '$0';
+        updateCheckoutBtnState();
+        return;
+    }
+
+    let total = 0;
+    els.cartItems.innerHTML = state.cart.map((item, index) => {
+        const itemTotal = item.product.price * item.quantity;
+        total += itemTotal;
+        return `
+            <div class="cart-item">
+                <div class="cart-item-name">${item.product.name}</div>
+                <div class="cart-item-price">$${item.product.price} / 單價</div>
+                <div class="cart-item-actions">
+                    <button class="qty-btn ${item.quantity === 1 ? 'remove' : ''}" onclick="updateQuantity(${index}, -1)">
+                        ${item.quantity === 1 ? '🗑️' : '-'}
+                    </button>
+                    <span class="item-qty">${item.quantity}</span>
+                    <button class="qty-btn" onclick="updateQuantity(${index}, 1)">+</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    els.totalAmount.textContent = `$${total}`;
+    updateCheckoutBtnState();
+    
+    // 捲動到底部
+    els.cartItems.scrollTop = els.cartItems.scrollHeight;
+}
+
+function updateCheckoutBtnState() {
+    els.checkoutBtn.disabled = state.cart.length === 0;
+}
+
+// 購物車操作
+function addToCart(productId) {
+    const product = MOCK_DATA.products.find(p => p.id === productId);
+    if (!product) return;
+
+    const existingItemIndex = state.cart.findIndex(item => item.product.id === productId);
+    
+    if (existingItemIndex > -1) {
+        state.cart[existingItemIndex].quantity += 1;
+    } else {
+        state.cart.push({ product, quantity: 1 });
+    }
+    
+    renderCart();
+}
+
+window.updateQuantity = function(index, delta) {
+    if (state.cart[index]) {
+        state.cart[index].quantity += delta;
+        if (state.cart[index].quantity <= 0) {
+            state.cart.splice(index, 1);
+        }
+        renderCart();
+    }
+};
+
+function clearCart() {
+    state.cart = [];
+    renderCart();
+}
+
+function getTotalAmount() {
+    return state.cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
+}
+
+function getDiscountedTotal() {
+    const total = getTotalAmount();
+    if (!state.discount.type) return total;
+    
+    if (state.discount.type === 'percent') {
+        return Math.round(total * (state.discount.value / 100));
+    } else if (state.discount.type === 'amount') {
+        return Math.max(0, total - state.discount.value);
+    }
+    return total;
+}
+
+// 結帳邏輯
+function openCheckoutModal() {
+    state.discount = { type: null, value: 0 };
+    updateDiscountUI();
+    
+    els.tenderedAmount.value = '';
+    updateModalTotalDisplay();
+    els.modal.showModal();
+}
+
+function updateModalTotalDisplay() {
+    const total = getDiscountedTotal();
+    els.modalTotalAmount.textContent = `$${total}`;
+    updateChange();
+}
+
+function updateDiscountUI() {
+    els.discountBtns.forEach(btn => {
+        btn.classList.remove('active');
+        if (state.discount.type && 
+            btn.dataset.type === state.discount.type && 
+            parseInt(btn.dataset.value) === state.discount.value) {
+            btn.classList.add('active');
+        }
+    });
+    
+    els.clearDiscountBtn.style.display = state.discount.type ? 'inline-block' : 'none';
+}
+
+function updateChange() {
+    const total = getDiscountedTotal();
+    const tendered = parseInt(els.tenderedAmount.value) || 0;
+    
+    if (els.tenderedAmount.value === '') {
+        els.modalChangeAmount.textContent = '$0';
+        els.modalChangeAmount.className = 'change-amount';
+        els.modalConfirmBtn.disabled = false;
+        return;
+    }
+
+    const change = tendered - total;
+    
+    if (change < 0) {
+        els.modalChangeAmount.textContent = `-$${Math.abs(change)} (金額不足)`;
+        els.modalChangeAmount.className = 'change-amount negative';
+        els.modalConfirmBtn.disabled = true;
+    } else {
+        els.modalChangeAmount.textContent = `$${change}`;
+        els.modalChangeAmount.className = 'change-amount';
+        els.modalConfirmBtn.disabled = false;
+    }
+}
+
+// 歷史紀錄邏輯
+function openHistoryModal() {
+    try {
+        els.historyList.innerHTML = '<div class="loading-message">載入中...</div>';
+        
+        // 兼容舊版瀏覽器的 showModal
+        if (typeof els.historyModal.showModal === 'function') {
+            els.historyModal.showModal();
+        } else {
+            els.historyModal.setAttribute('open', '');
+        }
+        
+        if (typeof google === 'undefined') {
+            setTimeout(() => {
+                renderHistory([
+                    { timestamp: new Date().toLocaleString(), staff: '店員A', totalAmount: 130, details: '招牌便當 x1, 紅茶 x1' }
+                ]);
+            }, 500);
+            return;
+        }
+        
+        // 檢查後端函數是否存在 (避免因為沒更新部署導致 undefined error)
+        if (typeof google.script.run.getSalesHistory !== 'function') {
+            alert('找不到後端函式 getSalesHistory，請確認您已經「新增部署」或正在使用 /dev 測試網址。');
+            return;
+        }
+        
+        google.script.run
+            .withSuccessHandler(renderHistory)
+            .withFailureHandler(err => {
+                els.historyList.innerHTML = `<div class="loading-message" style="color: var(--danger)">載入失敗：${err}</div>`;
+            })
+            .getSalesHistory();
+    } catch (err) {
+        alert('開啟視窗發生錯誤：' + err.message);
+    }
+}
+
+function renderHistory(history) {
+    if (!history || history.length === 0) {
+        els.historyList.innerHTML = '<div class="loading-message">尚無結帳紀錄</div>';
+        return;
+    }
+    
+    els.historyList.innerHTML = history.map(record => {
+        const isVoided = record.details.includes('[已作廢]');
+        const voidBtnHtml = isVoided 
+            ? `<span class="void-status">已作廢</span>`
+            : `<button type="button" class="void-btn" onclick="executeVoidOrder('${record.timestamp}', this)">作廢</button>`;
+            
+        return `
+            <div class="history-item ${isVoided ? 'is-voided' : ''}">
+                <div class="history-item-header">
+                    <span>時間：${record.timestamp}</span>
+                    <div class="history-header-right">
+                        ${voidBtnHtml}
+                    </div>
+                </div>
+                <div class="history-item-total">總計：$${record.totalAmount}</div>
+                <div class="history-item-details">${record.details}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function executeVoidOrder(timestamp, btn) {
+    if (!confirm('確定要作廢這筆訂單嗎？作廢後總金額將歸零，且無法復原。')) return;
+    
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '處理中...';
+    }
+    
+    if (typeof google === 'undefined') {
+        setTimeout(() => {
+            alert('作廢成功 (測試環境)');
+            openHistoryModal(); // reload history
+        }, 800);
+        return;
+    }
+    
+    google.script.run
+        .withSuccessHandler((success) => {
+            if (success) {
+                alert('作廢成功');
+                openHistoryModal(); // reload history
+            } else {
+                alert('作廢失敗：找不到該筆訂單');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = '作廢';
+                }
+            }
+        })
+        .withFailureHandler(err => {
+            alert('作廢發生錯誤：' + err);
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '作廢';
+            }
+        })
+        .voidOrder(timestamp);
+}
+
+function completeCheckout() {
+    els.modalConfirmBtn.disabled = true;
+    els.modalConfirmBtn.textContent = '處理中...';
+    
+    const originalTotal = getTotalAmount();
+    const finalTotal = getDiscountedTotal();
+    
+    const items = state.cart.map(i => ({
+        name: i.product.name,
+        price: i.product.price,
+        quantity: i.quantity,
+        subtotal: i.product.price * i.quantity
+    }));
+    
+    if (state.discount.type) {
+        const discountDesc = state.discount.type === 'percent' 
+            ? `(打 ${state.discount.value === 90 ? '9' : '8'} 折)` 
+            : `(折讓 $${state.discount.value})`;
+        const discountAmt = originalTotal - finalTotal;
+        items.push({
+            name: `[折扣] ${discountDesc}`,
+            price: -discountAmt,
+            quantity: 1,
+            subtotal: -discountAmt
+        });
+    }
+    
+    const orderData = {
+        timestamp: new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }),
+        totalAmount: finalTotal,
+        items: items,
+        tenderedAmount: parseInt(els.tenderedAmount.value) || 0,
+        changeAmount: (parseInt(els.tenderedAmount.value) || 0) - finalTotal
+    };
+    
+    if (typeof google === 'undefined') {
+        setTimeout(() => {
+            alert('結帳成功 (測試環境)');
+            els.modal.close();
+            clearCart();
+            els.tenderedAmount.value = '';
+            els.modalConfirmBtn.disabled = false;
+            els.modalConfirmBtn.textContent = '完成結帳';
+        }, 1000);
+        return;
+    }
+    
+    google.script.run
+        .withSuccessHandler(() => {
+            alert('結帳成功！');
+            els.modal.close();
+            clearCart();
+            els.tenderedAmount.value = '';
+            els.modalConfirmBtn.disabled = false;
+            els.modalConfirmBtn.textContent = '完成結帳';
+        })
+        .withFailureHandler(err => {
+            alert('結帳失敗：' + err);
+            els.modalConfirmBtn.disabled = false;
+            els.modalConfirmBtn.textContent = '完成結帳';
+        })
+        .submitOrder(orderData);
+}
+
+// 事件監聽綁定
+function setupEventListeners() {
+    // 數字鍵盤
+    document.querySelectorAll('.numpad-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const key = btn.dataset.key;
+            let currentVal = els.tenderedAmount.value;
+            
+            if (key === 'C') {
+                els.tenderedAmount.value = '';
+            } else if (key === 'BACK') {
+                els.tenderedAmount.value = currentVal.slice(0, -1);
+            } else {
+                els.tenderedAmount.value = currentVal + key;
+            }
+            updateChange();
+        });
+    });
+
+    // 點擊商品 (使用事件委派)
+    els.productGrid.addEventListener('click', e => {
+        const card = e.target.closest('.product-card');
+        if (card) {
+            addToCart(card.dataset.id);
+        }
+    });
+
+    // 其他按鈕
+    els.clearCartBtn.addEventListener('click', clearCart);
+    els.checkoutBtn.addEventListener('click', openCheckoutModal);
+    
+    // 歷史紀錄按鈕
+    els.historyBtn.addEventListener('click', openHistoryModal);
+    els.closeHistoryBtn.addEventListener('click', () => els.historyModal.close());
+    els.historyModal.addEventListener('click', (e) => {
+        if (e.target === els.historyModal) els.historyModal.close();
+    });
+    
+    // Modal 收現計算
+    els.tenderedAmount.addEventListener('input', updateChange);
+    
+    // 快速金額按鈕
+    els.quickBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const amount = btn.dataset.amount;
+            if (amount === 'exact') {
+                els.tenderedAmount.value = getDiscountedTotal();
+            } else {
+                const current = parseInt(els.tenderedAmount.value) || 0;
+                els.tenderedAmount.value = current + parseInt(amount);
+            }
+            updateChange();
+        });
+    });
+
+    // 折扣按鈕點擊
+    els.discountBtns.forEach(btn => {
+        if (btn.id === 'clear-discount-btn') return;
+        btn.addEventListener('click', () => {
+            state.discount = {
+                type: btn.dataset.type,
+                value: parseInt(btn.dataset.value)
+            };
+            updateDiscountUI();
+            updateModalTotalDisplay();
+        });
+    });
+
+    els.clearDiscountBtn.addEventListener('click', () => {
+        state.discount = { type: null, value: 0 };
+        updateDiscountUI();
+        updateModalTotalDisplay();
+    });
+
+    // Dialog form submission handling
+    els.modal.addEventListener('close', () => {
+        if (els.modal.returnValue === 'confirm') {
+            completeCheckout();
+        }
+        els.modal.returnValue = ''; // reset
+    });
+
+}
+
+// 啟動應用
+document.addEventListener('DOMContentLoaded', init);
+</script>

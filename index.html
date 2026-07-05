@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Modern POS System</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 左側：主要內容區 (商品與分類) -->
+        <main class="main-content">
+            <header class="header">
+                <h1>點餐系統</h1>
+            </header>
+            
+            <section class="product-grid" id="product-grid">
+                <!-- 商品卡片由 JS 動態產生 -->
+            </section>
+        </main>
+
+        <!-- 右側：購物車與結帳區 -->
+        <aside class="cart-sidebar">
+            <div class="cart-header">
+                <h2>購物明細</h2>
+                <button type="button" class="clear-cart-btn" id="clear-cart-btn">清空</button>
+            </div>
+            
+            <div class="cart-items" id="cart-items">
+                <!-- 購物車項目由 JS 動態產生 -->
+                <div class="empty-cart-message">尚未選擇任何商品</div>
+            </div>
+            
+            <div class="cart-footer">
+                <div class="staff-selection">
+                    <h3>處理人員</h3>
+                    <div class="staff-buttons" id="staff-buttons">
+                        <!-- 人員按鈕由 JS 動態產生 -->
+                    </div>
+                </div>
+                
+                <div class="total-section">
+                    <span>總計金額</span>
+                    <span class="total-amount" id="total-amount">$0</span>
+                </div>
+                
+                <button type="button" class="checkout-btn" id="checkout-btn" disabled>
+                    結帳
+                </button>
+            </div>
+        </aside>
+    </div>
+
+    <!-- 結帳彈出視窗 (Modal) -->
+    <dialog id="checkout-modal" class="modal">
+        <div class="modal-content">
+            <h2>結帳</h2>
+            
+            <div class="checkout-details">
+                <div class="detail-row">
+                    <span>處理人員：</span>
+                    <span id="modal-staff-name" class="highlight-text">-</span>
+                </div>
+                <div class="detail-row total-row">
+                    <span>應付總額：</span>
+                    <span id="modal-total-amount" class="highlight-total">$0</span>
+                </div>
+            </div>
+
+            <div class="payment-section">
+                <label for="tendered-amount">收現金額：</label>
+                <div class="input-group">
+                    <span class="currency-symbol">$</span>
+                    <input type="number" id="tendered-amount" placeholder="0" min="0" readonly>
+                </div>
+                
+                <div class="numpad-container">
+                    <div class="numpad">
+                        <button type="button" class="numpad-btn" data-key="1">1</button>
+                        <button type="button" class="numpad-btn" data-key="2">2</button>
+                        <button type="button" class="numpad-btn" data-key="3">3</button>
+                        <button type="button" class="numpad-btn" data-key="4">4</button>
+                        <button type="button" class="numpad-btn" data-key="5">5</button>
+                        <button type="button" class="numpad-btn" data-key="6">6</button>
+                        <button type="button" class="numpad-btn" data-key="7">7</button>
+                        <button type="button" class="numpad-btn" data-key="8">8</button>
+                        <button type="button" class="numpad-btn" data-key="9">9</button>
+                        <button type="button" class="numpad-btn numpad-clear" data-key="C">清除</button>
+                        <button type="button" class="numpad-btn" data-key="0">0</button>
+                        <button type="button" class="numpad-btn numpad-back" data-key="BACK">⌫</button>
+                    </div>
+                    <div class="quick-amounts-vertical">
+                        <button type="button" class="quick-btn" data-amount="100">+100</button>
+                        <button type="button" class="quick-btn" data-amount="500">+500</button>
+                        <button type="button" class="quick-btn" data-amount="1000">+1000</button>
+                        <button type="button" class="quick-btn" data-amount="exact">剛好</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="change-section">
+                <span>找零：</span>
+                <span id="modal-change-amount" class="change-amount">$0</span>
+            </div>
+
+            <form method="dialog" class="modal-actions">
+                <button value="cancel" class="cancel-btn" id="modal-cancel-btn">取消</button>
+                <button value="confirm" class="confirm-btn" id="modal-confirm-btn">完成結帳</button>
+            </form>
+        </div>
+    </dialog>
+
+    <script src="script.js"></script>
+</body>
+</html>
