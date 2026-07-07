@@ -7,16 +7,26 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="點餐系統">
     <title>Modern POS System</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <?!= include('style'); ?>
 </head>
 <body>
     <div class="app-container">
+        <!-- 網路狀態指示列 -->
+        <div id="network-status" class="network-status hidden">
+            <span class="status-icon">🔴</span>
+            <span class="status-text">目前離線</span>
+            <span class="offline-count" id="offline-count"></span>
+        </div>
         <!-- 左側：主要內容區 (商品與分類) -->
         <main class="main-content">
             <header class="header">
                 <h1>點餐系統</h1>
-                <button type="button" class="history-btn" id="history-btn">📋 銷售紀錄</button>
+                <div class="header-actions">
+                    <button type="button" class="report-btn" id="report-btn">📊 營業報表</button>
+                    <button type="button" class="history-btn" id="history-btn">📋 銷售紀錄</button>
+                </div>
             </header>
             
             <section class="product-grid" id="product-grid">
@@ -123,6 +133,66 @@
             
             <div class="history-list" id="history-list">
                 <div class="loading-message">載入中...</div>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- 營業報表彈出視窗 -->
+    <dialog id="report-modal" class="modal report-modal">
+        <div class="modal-content">
+            <div class="report-header">
+                <div>
+                    <h2>營業報表 (Daily Sales Report)</h2>
+                    <div class="report-date" id="report-date-display">今日</div>
+                </div>
+                <button type="button" class="close-report-btn" id="close-report-btn">✕</button>
+            </div>
+            
+            <div class="report-body" id="report-body">
+                <!-- 載入中畫面 -->
+                <div id="report-loading" class="loading-message">載入數據中...</div>
+                
+                <div id="report-dashboard" class="report-dashboard hidden">
+                    <!-- KPI Cards -->
+                    <div class="kpi-grid">
+                        <div class="kpi-card">
+                            <div class="kpi-title">總營業額 (TOTAL SALES)</div>
+                            <div class="kpi-value highlight-total" id="kpi-total-sales">$0</div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="kpi-title">總訂單數 (TOTAL ORDERS)</div>
+                            <div class="kpi-value" id="kpi-total-orders">0</div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="kpi-title">平均客單價 (AVG ORDER VALUE)</div>
+                            <div class="kpi-value" id="kpi-avg-order">$0</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Sales Trend Chart -->
+                    <div class="chart-container trend-chart-container">
+                        <h3>營業趨勢 (SALES TREND)</h3>
+                        <div style="position: relative; height: 250px; width: 100%;">
+                            <canvas id="trend-chart"></canvas>
+                        </div>
+                    </div>
+                    
+                    <!-- Bottom Charts -->
+                    <div class="bottom-charts-grid">
+                        <div class="chart-container">
+                            <h3>熱銷商品排行 (TOP ITEMS)</h3>
+                            <div class="top-items-list" id="top-items-list">
+                                <!-- 動態產生排行 -->
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <h3>銷售佔比 (SALES SHARE)</h3>
+                            <div style="position: relative; height: 200px; width: 100%;">
+                                <canvas id="category-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </dialog>

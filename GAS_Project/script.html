@@ -37,11 +37,39 @@ const els = {
     historyModal: document.getElementById('history-modal'),
     closeHistoryBtn: document.getElementById('close-history-btn'),
     historyList: document.getElementById('history-list'),
+    
+    // Network Status
+    networkStatus: document.getElementById('network-status'),
+    statusIcon: document.querySelector('.status-icon'),
+    statusText: document.querySelector('.status-text'),
+    offlineCount: document.getElementById('offline-count'),
+    
+    // Report
+    reportBtn: document.getElementById('report-btn'),
+    reportModal: document.getElementById('report-modal'),
+    closeReportBtn: document.getElementById('close-report-btn'),
+    reportLoading: document.getElementById('report-loading'),
+    reportDashboard: document.getElementById('report-dashboard'),
+    kpiTotalSales: document.getElementById('kpi-total-sales'),
+    kpiTotalOrders: document.getElementById('kpi-total-orders'),
+    kpiAvgOrder: document.getElementById('kpi-avg-order'),
+    topItemsList: document.getElementById('top-items-list'),
+    reportDateDisplay: document.getElementById('report-date-display')
 };
+
+let trendChartInstance = null;
+let categoryChartInstance = null;
 
 // 初始化
 function init() {
     els.productGrid.innerHTML = '<div class="empty-cart-message">正在載入商品資料...</div>';
+    
+    updateNetworkUI();
+    window.addEventListener('online', () => {
+        updateNetworkUI();
+        syncOfflineOrders();
+    });
+    window.addEventListener('offline', updateNetworkUI);
     
     if (typeof google === 'undefined') {
         console.log('Local environment detected. Using mock data.');
@@ -58,19 +86,135 @@ function init() {
         return;
     }
     
+    if (!navigator.onLine) {
+        // 離線狀態，嘗試載入快取資料
+        const cached = localStorage.getItem('pos_cached_data');
+        if (cached) {
+            initData(JSON.parse(cached));
+        } else {
+            els.productGrid.innerHTML = '<div class="empty-cart-message" style="color: var(--danger)">無網路且無本地快取資料，請連線後重試。</div>';
+        }
+        return;
+    }
+    
     // 透過 GAS API 取得試算表資料
     google.script.run
         .withSuccessHandler(initData)
         .withFailureHandler(err => {
-            alert('載入資料失敗：' + err);
+            const cached = localStorage.getItem('pos_cached_data');
+            if (cached) {
+                initData(JSON.parse(cached));
+            } else {
+                alert('載入資料失敗且無快取：' + err);
+            }
         })
         .getInitialData();
+        
+    // 啟動時如果有網路，也嘗試同步
+    if (navigator.onLine) {
+        syncOfflineOrders();
+    }
 }
 
 function initData(data) {
     MOCK_DATA = data;
+    try {
+        localStorage.setItem('pos_cached_data', JSON.stringify(data));
+    } catch (e) {
+        console.warn('無法儲存快取:', e);
+    }
     renderProducts();
     setupEventListeners();
+}
+
+// --- 離線同步相關函式 ---
+function getOfflineOrders() {
+    try {
+        const stored = localStorage.getItem('pos_offline_orders');
+        return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveOfflineOrder(orderData) {
+    const orders = getOfflineOrders();
+    orders.push(orderData);
+    localStorage.setItem('pos_offline_orders', JSON.stringify(orders));
+    updateNetworkUI();
+}
+
+function clearOfflineOrders() {
+    localStorage.removeItem('pos_offline_orders');
+    updateNetworkUI();
+}
+
+function updateNetworkUI() {
+    const isOnline = navigator.onLine;
+    const offlineOrders = getOfflineOrders();
+    const count = offlineOrders.length;
+    
+    if (!isOnline) {
+        els.networkStatus.className = 'network-status'; // show
+        els.statusIcon.textContent = '🔴';
+        els.statusText.textContent = '目前離線';
+        els.offlineCount.textContent = count > 0 ? `(未同步: ${count} 筆)` : '';
+        els.offlineCount.style.display = count > 0 ? 'inline-block' : 'none';
+    } else {
+        if (count > 0) {
+            els.networkStatus.className = 'network-status syncing'; // show syncing state
+            els.statusIcon.textContent = '⏳';
+            els.statusText.textContent = '網路已恢復，等待同步中...';
+            els.offlineCount.textContent = `(待同步: ${count} 筆)`;
+            els.offlineCount.style.display = 'inline-block';
+        } else {
+            els.networkStatus.className = 'network-status hidden'; // hide
+        }
+    }
+}
+
+let isSyncing = false;
+function syncOfflineOrders() {
+    if (!navigator.onLine || isSyncing) return;
+    
+    const orders = getOfflineOrders();
+    if (orders.length === 0) return;
+    
+    isSyncing = true;
+    els.networkStatus.className = 'network-status syncing';
+    els.statusIcon.textContent = '🔄';
+    els.statusText.textContent = '同步資料中...';
+    
+    if (typeof google === 'undefined') {
+        setTimeout(() => {
+            clearOfflineOrders();
+            isSyncing = false;
+            updateNetworkUI();
+            console.log('本地測試：已清空離線訂單');
+        }, 1500);
+        return;
+    }
+    
+    google.script.run
+        .withSuccessHandler(() => {
+            clearOfflineOrders();
+            isSyncing = false;
+            
+            // 顯示成功訊息一下再隱藏
+            els.networkStatus.className = 'network-status online';
+            els.statusIcon.textContent = '🟢';
+            els.statusText.textContent = '同步完成';
+            els.offlineCount.style.display = 'none';
+            setTimeout(() => {
+                updateNetworkUI();
+            }, 3000);
+        })
+        .withFailureHandler(err => {
+            console.error('同步失敗:', err);
+            isSyncing = false;
+            updateNetworkUI();
+        })
+        .submitBulkOrders(orders);
 }
 
 // 渲染商品網格 (顯示所有分類)
@@ -244,12 +388,38 @@ function openHistoryModal() {
             els.historyModal.setAttribute('open', '');
         }
         
+        const offlineOrders = getOfflineOrders();
+        let offlineHtml = '';
+        if (offlineOrders.length > 0) {
+            offlineHtml = offlineOrders.map(record => {
+                const detailsString = record.items.map(item => 
+                    `${item.name} x ${item.quantity} ($${item.subtotal})`
+                ).join('\n');
+                return `
+                    <div class="history-item" style="border-left: 4px solid var(--danger);">
+                        <div class="history-item-header">
+                            <span>時間：${record.timestamp} (未同步)</span>
+                            <span class="void-status" style="background: var(--danger); color: white;">排隊中</span>
+                        </div>
+                        <div class="history-item-total">總計：$${record.totalAmount}</div>
+                        <div class="history-item-details">${detailsString}</div>
+                    </div>
+                `;
+            }).join('') + '<hr style="margin: 1rem 0; border: none; border-top: 1px dashed var(--border);">';
+            
+            els.historyList.innerHTML = offlineHtml + '<div class="loading-message">載入歷史紀錄中...</div>';
+        }
+        
         if (typeof google === 'undefined') {
             setTimeout(() => {
-                renderHistory([
-                    { timestamp: new Date().toLocaleString(), staff: '店員A', totalAmount: 130, details: '招牌便當 x1, 紅茶 x1' }
-                ]);
+                const mockHistory = [{ timestamp: new Date().toLocaleString(), staff: '店員A', totalAmount: 130, details: '招牌便當 x1, 紅茶 x1' }];
+                renderHistory(mockHistory, offlineHtml);
             }, 500);
+            return;
+        }
+        
+        if (!navigator.onLine) {
+            els.historyList.innerHTML = offlineHtml + '<div class="loading-message">目前離線，無法取得雲端歷史紀錄。</div>';
             return;
         }
         
@@ -260,9 +430,9 @@ function openHistoryModal() {
         }
         
         google.script.run
-            .withSuccessHandler(renderHistory)
+            .withSuccessHandler(history => renderHistory(history, offlineHtml))
             .withFailureHandler(err => {
-                els.historyList.innerHTML = `<div class="loading-message" style="color: var(--danger)">載入失敗：${err}</div>`;
+                els.historyList.innerHTML = offlineHtml + `<div class="loading-message" style="color: var(--danger)">載入雲端紀錄失敗：${err}</div>`;
             })
             .getSalesHistory();
     } catch (err) {
@@ -270,13 +440,225 @@ function openHistoryModal() {
     }
 }
 
-function renderHistory(history) {
-    if (!history || history.length === 0) {
-        els.historyList.innerHTML = '<div class="loading-message">尚無結帳紀錄</div>';
+// --- 報表邏輯 ---
+function openReportModal() {
+    try {
+        if (typeof els.reportModal.showModal === 'function') {
+            els.reportModal.showModal();
+        } else {
+            els.reportModal.setAttribute('open', '');
+        }
+        
+        els.reportLoading.style.display = 'block';
+        els.reportDashboard.classList.add('hidden');
+        
+        if (typeof google === 'undefined') {
+            setTimeout(() => {
+                const mockData = {
+                    date: new Date().toLocaleDateString('zh-TW'),
+                    totalSales: 12850,
+                    totalOrders: 342,
+                    averageOrderValue: 37,
+                    hourlySales: { '08': 200, '09': 500, '10': 600, '11': 450, '12': 900, '13': 750, '14': 800, '15': 1450, '16': 1200 },
+                    topItems: [
+                        { name: '冰拿鐵', qty: 26, amount: 2850 },
+                        { name: '可頌', qty: 12, amount: 1450 },
+                        { name: '經典牛肉堡', qty: 7, amount: 1000 },
+                        { name: '酪梨吐司', qty: 3, amount: 500 }
+                    ]
+                };
+                renderReport(mockData);
+            }, 800);
+            return;
+        }
+        
+        if (!navigator.onLine) {
+            els.reportLoading.innerHTML = '<span style="color: var(--danger)">目前離線，無法取得最新報表資料。</span>';
+            return;
+        }
+        
+        if (typeof google.script.run.getDailyReportData !== 'function') {
+            els.reportLoading.innerHTML = '<span style="color: var(--danger)">找不到後端函式 getDailyReportData，請確認已更新部署。</span>';
+            return;
+        }
+        
+        google.script.run
+            .withSuccessHandler(renderReport)
+            .withFailureHandler(err => {
+                els.reportLoading.innerHTML = `<span style="color: var(--danger)">載入報表失敗：${err}</span>`;
+            })
+            .getDailyReportData(); // 預設抓今日
+    } catch (err) {
+        alert('開啟報表發生錯誤：' + err.message);
+    }
+}
+
+function renderReport(data) {
+    if (!data) {
+        els.reportLoading.innerHTML = '今日尚無結帳紀錄，無法產生報表。';
         return;
     }
     
-    els.historyList.innerHTML = history.map(record => {
+    els.reportLoading.style.display = 'none';
+    els.reportDashboard.classList.remove('hidden');
+    
+    els.reportDateDisplay.textContent = data.date;
+    els.kpiTotalSales.textContent = `$${data.totalSales.toLocaleString()}`;
+    els.kpiTotalOrders.textContent = data.totalOrders.toLocaleString();
+    els.kpiAvgOrder.textContent = `$${data.averageOrderValue.toLocaleString()}`;
+    
+    // Render Top Items List
+    els.topItemsList.innerHTML = data.topItems.map(item => `
+        <div class="top-item-row">
+            <div class="top-item-name">${item.name}</div>
+            <div class="top-item-qty">${item.qty} 份</div>
+            <div class="top-item-sales">$${item.amount.toLocaleString()}</div>
+        </div>
+    `).join('');
+    
+    // Draw Charts
+    drawTrendChart(data.hourlySales);
+    drawCategoryChart(data.topItems);
+}
+
+function drawTrendChart(hourlySales) {
+    const ctx = document.getElementById('trend-chart');
+    if (!ctx) return;
+    
+    // 整理 08:00 到 22:00 的資料 (或根據實際資料的範圍)
+    const hours = Array.from({length: 15}, (_, i) => (i + 8).toString().padStart(2, '0'));
+    const labels = hours.map(h => `${h}:00`);
+    const dataPoints = hours.map(h => hourlySales[h] || 0);
+    
+    if (trendChartInstance) {
+        trendChartInstance.destroy();
+    }
+    
+    trendChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: '營業額 ($)',
+                data: dataPoints,
+                borderColor: '#38BDF8',
+                backgroundColor: 'rgba(56, 189, 248, 0.2)',
+                borderWidth: 3,
+                pointBackgroundColor: '#111827',
+                pointBorderColor: '#38BDF8',
+                pointBorderWidth: 2,
+                pointRadius: 4,
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    backgroundColor: 'rgba(17, 24, 39, 0.9)',
+                    titleColor: '#F3F4F6',
+                    bodyColor: '#38BDF8',
+                    borderColor: 'rgba(255,255,255,0.1)',
+                    borderWidth: 1
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#9CA3AF' }
+                },
+                y: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#9CA3AF', callback: (val) => '$' + val }
+                }
+            }
+        }
+    });
+}
+
+function drawCategoryChart(topItems) {
+    const ctx = document.getElementById('category-chart');
+    if (!ctx) return;
+    
+    if (categoryChartInstance) {
+        categoryChartInstance.destroy();
+    }
+    
+    // 取前 5 名，剩下的歸為「其他」
+    let labels = [];
+    let dataPoints = [];
+    let otherAmount = 0;
+    
+    topItems.forEach((item, index) => {
+        if (index < 5) {
+            labels.push(item.name);
+            dataPoints.push(item.amount);
+        } else {
+            otherAmount += item.amount;
+        }
+    });
+    
+    if (otherAmount > 0) {
+        labels.push('其他');
+        dataPoints.push(otherAmount);
+    }
+    
+    categoryChartInstance = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: dataPoints,
+                backgroundColor: [
+                    '#38BDF8', '#34D399', '#A78BFA', '#F472B6', '#FBBF24', '#9CA3AF'
+                ],
+                borderWidth: 0,
+                hoverOffset: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '70%',
+            plugins: {
+                legend: {
+                    position: 'right',
+                    labels: { color: '#D1D5DB', usePointStyle: true, boxWidth: 8 }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(17, 24, 39, 0.9)',
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.label || '';
+                            if (label) label += ': ';
+                            if (context.parsed !== null) {
+                                label += new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(context.parsed);
+                            }
+                            return label;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderHistory(history, offlineHtml = '') {
+    if (!history || history.length === 0) {
+        if (!offlineHtml) {
+            els.historyList.innerHTML = '<div class="loading-message">尚無結帳紀錄</div>';
+        } else {
+            els.historyList.innerHTML = offlineHtml + '<div class="loading-message">雲端尚無結帳紀錄</div>';
+        }
+        return;
+    }
+    
+    const cloudHtml = history.map(record => {
         const isVoided = record.details.includes('[已作廢]');
         const voidBtnHtml = isVoided 
             ? `<span class="void-status">已作廢</span>`
@@ -295,6 +677,8 @@ function renderHistory(history) {
             </div>
         `;
     }).join('');
+    
+    els.historyList.innerHTML = offlineHtml + cloudHtml;
 }
 
 function executeVoidOrder(timestamp, btn) {
@@ -371,31 +755,48 @@ function completeCheckout() {
         changeAmount: (parseInt(els.tenderedAmount.value) || 0) - finalTotal
     };
     
+    const onSuccess = (isOffline = false) => {
+        if (isOffline) {
+            alert('結帳完成！\n(目前離線，訂單已暫存，恢復連線後將自動同步)');
+        } else {
+            alert('結帳成功！');
+        }
+        els.modal.close();
+        clearCart();
+        els.tenderedAmount.value = '';
+        els.modalConfirmBtn.disabled = false;
+        els.modalConfirmBtn.textContent = '完成結帳';
+    };
+    
     if (typeof google === 'undefined') {
         setTimeout(() => {
-            alert('結帳成功 (測試環境)');
-            els.modal.close();
-            clearCart();
-            els.tenderedAmount.value = '';
-            els.modalConfirmBtn.disabled = false;
-            els.modalConfirmBtn.textContent = '完成結帳';
+            if (!navigator.onLine) {
+                saveOfflineOrder(orderData);
+                onSuccess(true);
+            } else {
+                alert('結帳成功 (測試環境)');
+                onSuccess(false);
+            }
         }, 1000);
+        return;
+    }
+    
+    if (!navigator.onLine) {
+        // 直接離線儲存
+        saveOfflineOrder(orderData);
+        onSuccess(true);
         return;
     }
     
     google.script.run
         .withSuccessHandler(() => {
-            alert('結帳成功！');
-            els.modal.close();
-            clearCart();
-            els.tenderedAmount.value = '';
-            els.modalConfirmBtn.disabled = false;
-            els.modalConfirmBtn.textContent = '完成結帳';
+            onSuccess(false);
         })
         .withFailureHandler(err => {
-            alert('結帳失敗：' + err);
-            els.modalConfirmBtn.disabled = false;
-            els.modalConfirmBtn.textContent = '完成結帳';
+            // 如果是在線上但伺服器錯誤/超時，我們也把它當離線存起來，以防店員卡住
+            console.warn('伺服器回報錯誤或逾時，改為離線儲存:', err);
+            saveOfflineOrder(orderData);
+            onSuccess(true);
         })
         .submitOrder(orderData);
 }
@@ -436,6 +837,13 @@ function setupEventListeners() {
     els.closeHistoryBtn.addEventListener('click', () => els.historyModal.close());
     els.historyModal.addEventListener('click', (e) => {
         if (e.target === els.historyModal) els.historyModal.close();
+    });
+    
+    // 報表按鈕
+    els.reportBtn.addEventListener('click', openReportModal);
+    els.closeReportBtn.addEventListener('click', () => els.reportModal.close());
+    els.reportModal.addEventListener('click', (e) => {
+        if (e.target === els.reportModal) els.reportModal.close();
     });
     
     // Modal 收現計算

@@ -92,6 +92,7 @@ body {
     gap: 1.5rem;
     align-content: start;
     scrollbar-gutter: stable;
+    min-block-size: 0;
 }
 
 /* Product Card */
@@ -147,6 +148,7 @@ body {
     block-size: 100%;
     box-shadow: var(--shadow-lg);
     z-index: 20;
+    overflow: hidden;
 }
 
 .cart-header {
@@ -184,6 +186,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 1rem;
+    min-block-size: 0;
 }
 
 .empty-cart-message {
